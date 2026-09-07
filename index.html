@@ -53,7 +53,7 @@ body{
   -webkit-font-smoothing:antialiased;
   overflow-x:hidden;
 }
-body:not(.unlocked){overflow-y:hidden;height:100vh;}
+body:not(.unlocked){overflow-y:hidden;height:100vh;height:100dvh;}
 /* returning-visitor fast path — skips the lock screen instantly, no flash */
 html.skip-lock #lockOverlay{display:none !important;}
 html.skip-lock body{overflow-y:auto !important;height:auto !important;}
@@ -97,6 +97,28 @@ button{font-family:inherit;}
 @keyframes driftA{0%,100%{transform:translate(0,0);}50%{transform:translate(40px,60px);}}
 @keyframes driftB{0%,100%{transform:translate(0,0);}50%{transform:translate(-50px,-40px);}}
 @keyframes driftC{0%,100%{transform:translate(0,0);}50%{transform:translate(-60px,30px);}}
+
+/* ============================================================
+   MOBILE / LOW-POWER PERFORMANCE OVERRIDES
+   backdrop-filter blur is extremely GPU-expensive, especially
+   when several blurred layers overlap during scroll on phones —
+   this is the single biggest cause of jank/lag on mobile, so it
+   gets cut back hard below 760px and for touch-primary devices.
+============================================================ */
+@media (max-width:760px), (hover:none) and (pointer:coarse){
+  .blob{display:none;}
+  .grid-overlay{display:none;}
+  .glass,.glass-soft,.palette-backdrop,#lockOverlay,.modal-backdrop,.modal,.hud-toast,
+  .rb-inner,.mobile-menu{
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+  .glass{background:rgba(10,16,26,0.92);}
+  .glass-soft{background:rgba(10,16,26,0.88);}
+  #lockOverlay{background:rgba(3,6,10,0.94);}
+  .modal{background:rgba(10,16,26,0.97);}
+  *{animation-duration:0.01ms !important;animation-iteration-count:1 !important;transition-duration:0.01ms !important;}
+}
 
 /* ============================================================
    GLASS UTILITIES
@@ -327,7 +349,7 @@ body.unlocked .locked-badge{display:none;}
 /* ============================================================
    HERO
 ============================================================ */
-#home{padding-top:150px;min-height:92vh;display:flex;align-items:center;}
+#home{padding-top:150px;min-height:92vh;min-height:92dvh;display:flex;align-items:center;}
 .hero-grid{display:grid;grid-template-columns:1.15fr 0.85fr;gap:60px;align-items:center;width:100%;}
 .hero-status{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px;}
 .hero-name{font-size:clamp(42px,6.4vw,74px);line-height:1;margin-bottom:14px;}
@@ -1372,15 +1394,24 @@ footer{position:relative;z-index:1;padding:50px 0 34px;border-top:1px solid var(
 <script>
 (function(){
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var isMobile = window.matchMedia('(max-width: 760px)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  var lowPower = reduceMotion || isMobile;
 
   /* ---------------- background particle canvas ---------------- */
   var canvas = document.getElementById('bgCanvas');
+  if(lowPower){
+    canvas.remove();
+  } else {
   var ctx = canvas.getContext('2d');
   var W, H, particles = [];
+  var resizeRaf = null;
   function resize(){ W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
   resize();
-  window.addEventListener('resize', resize);
-  var COUNT = reduceMotion ? 0 : 70;
+  window.addEventListener('resize', function(){
+    if(resizeRaf) cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(resize);
+  });
+  var COUNT = 70;
   for(var i=0;i<COUNT;i++){
     particles.push({
       x: Math.random()*W, y: Math.random()*H,
@@ -1403,9 +1434,10 @@ footer{position:relative;z-index:1;padding:50px 0 34px;border-top:1px solid var(
       ctx.fillStyle = 'rgba(130,224,255,'+p.a+')';
       ctx.fill();
     }
-    if(!reduceMotion) requestAnimationFrame(drawParticles);
+    requestAnimationFrame(drawParticles);
   }
   drawParticles();
+  }
 
   /* ---------------- live clock ---------------- */
   var clockOut = document.getElementById('clockOut');
@@ -1440,7 +1472,6 @@ footer{position:relative;z-index:1;padding:50px 0 34px;border-top:1px solid var(
   var lockFrame = document.getElementById('lockFrame');
   var sparkTimer = null;
   function spawnSpark(){
-    if(reduceMotion) return;
     var rect = lockFrame.getBoundingClientRect();
     var el = document.createElement('div');
     el.className = 'spark';
@@ -1451,7 +1482,7 @@ footer{position:relative;z-index:1;padding:50px 0 34px;border-top:1px solid var(
     document.body.appendChild(el);
     setTimeout(function(){ el.remove(); }, 2300);
   }
-  if(!alreadyUnlocked){
+  if(!alreadyUnlocked && !lowPower){
     sparkTimer = setInterval(spawnSpark, 450);
   }
 
@@ -1626,14 +1657,22 @@ footer{position:relative;z-index:1;padding:50px 0 34px;border-top:1px solid var(
   /* ---------------- active nav link on scroll ---------------- */
   var navLinks = document.querySelectorAll('[data-link]');
   var sections = Array.prototype.map.call(navLinks, function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
-  window.addEventListener('scroll', function(){
+  var navScrollTicking = false;
+  function updateActiveNav(){
     var pos = window.scrollY + 160;
     var current = sections[0];
     sections.forEach(function(s){ if(s.offsetTop <= pos) current = s; });
     navLinks.forEach(function(a){
       a.classList.toggle('active', a.getAttribute('href') === '#' + current.id);
     });
-  });
+    navScrollTicking = false;
+  }
+  window.addEventListener('scroll', function(){
+    if(!navScrollTicking){
+      navScrollTicking = true;
+      requestAnimationFrame(updateActiveNav);
+    }
+  }, {passive: true});
 
   /* ---------------- vibe coding hidden section ---------------- */
   var vibeTrigger = document.getElementById('vibeCodingTrigger');
